@@ -11,17 +11,25 @@ app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-key')
 # Configure Redis
 redis_host = os.environ.get('REDIS_HOST', 'localhost')
 redis_port = int(os.environ.get('REDIS_PORT', 6379))
-redis_client = redis.Redis(host=redis_host, 
-                           port=redis_port, 
-                           decode_responses=True)
-
-# Init SocketIO with Redis message queue
-socketio = SocketIO(app, 
-                    cors_allowed_origins="*", 
-                    message_queue=f'redis://{redis_host}:{redis_port}')
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Test Redis connection early
+try:
+    redis_client = redis.Redis(host=redis_host, port=redis_port, decode_responses=True)
+    redis_client.ping()
+    logger.info(f'Successfully connected to Redis at {redis_host}:{redis_port}')
+except Exception as e:
+    logger.error(f'Failed to connect to Redis: {e}')
+    redis_client = None
+
+# Init SocketIO with Redis message queue
+socketio = SocketIO(
+    app, 
+    cors_allowed_origins="*",
+    message_queue=f'redis://{redis_host}:{redis_port}'
+)
 
 # Store active users (in-memory, per instance)
 active_users = {} # maps sessionID (sid) to usernames
@@ -92,7 +100,13 @@ def handle_leave(data):
 
 @socketio.on('message')
 def handle_message(data):
-    username = data.get('username', 'Anonymous')
+    # Get username from active_users or from data as fallback
+    username = active_users.get(request.sid)
+    # Get username from active_users or from data as fallback
+    if not username:
+        username = data.get('username', 'Anonymous')
+        logger.warning(f'Username not found for {request.sid}, using fallback: {username}')
+
     room = data.get('room', 'general')
     message = data.get('message', '')
 
